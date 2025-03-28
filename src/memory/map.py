@@ -9,7 +9,7 @@ from src.memory.core.memory import DirectMemory
 from src.memory.eviction import LRUEvictionPolicy
 from src.memory.head import SimpleHeadPolicy
 from src.memory.nucleos import NucleosManager
-from src.memory.placement import BestFitPlacementPolicy
+from src.memory.placement import BestFitPlacementPolicy, BuddyAllocator
 from src.memory.sync import HybridLockManager
 
 
@@ -44,7 +44,7 @@ class Memory:
         # Set up policies (with defaults if not provided)
         self.lock_policy = lock_policy or HybridLockManager()
         self.eviction_policy = eviction_policy or LRUEvictionPolicy()
-        self.placement_policy = placement_policy or BestFitPlacementPolicy()
+        self.placement_policy = placement_policy or BuddyAllocator(self.memory_size)
 
         self.head = head_policy or SimpleHeadPolicy()
 

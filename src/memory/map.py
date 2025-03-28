@@ -3,7 +3,6 @@ import threading
 import numpy as np
 import pyarrow as pa
 
-from src.memory.core.fast_access import FastLookupTable
 from src.memory.core.memory import DirectMemory
 from src.memory.eviction import LRUEvictionPolicy
 from src.memory.head import SimpleHeadPolicy
@@ -52,7 +51,7 @@ class Memory:
         self.placement_policy.initialize(memory_size)
 
         # Key to memory location mapping
-        self.lookup_table = FastLookupTable()  # key -> (start, end)
+        self.lookup_table = {}  # key -> (start, end)
 
         # Start thread manager
         self.thread_manager = NucleosManager(self)
@@ -226,7 +225,9 @@ class Memory:
 
     def _rebuild_internal(self):
         """Internal method to rebuild memory (called by thread manager)"""
-        self.lock_policy.acquire_write(None)  # Global lock
+        self.lock_policy.acquire_write(
+            None
+        )  # Global lock  # Prevent writes during rebuild
         try:
             # Get current allocated blocks
             allocated_blocks = [

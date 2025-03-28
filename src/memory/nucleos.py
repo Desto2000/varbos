@@ -13,7 +13,6 @@ class NucleosManager:
         self.thread_pool = ThreadPoolExecutor(
             max_workers=max_workers or (threading.active_count() * 2)
         )
-        self.maintenance_queue = queue.PriorityQueue()
         self.task_futures = {}
         self.shutdown_flag = False
         self.tasks_processed = 0
@@ -29,7 +28,7 @@ class NucleosManager:
         # Use thread local storage for per-thread caching
         self.thread_local = threading.local()
 
-    def schedule_task(self, task_type, args=None, priority=5):
+    def schedule_task(self, task_type, args=None):
         """Schedule task with priority (lower = higher priority)"""
         if self.shutdown_flag:
             return None
@@ -131,16 +130,14 @@ class NucleosManager:
 
             # Prioritize based on current conditions
             if free_ratio < 0.1:  # Critical memory pressure
-                self.schedule_task("evict", 10, priority=1)
+                self.schedule_task("evict", 10)
             elif free_ratio < 0.2:  # High memory pressure
-                self.schedule_task("evict", 5, priority=2)
+                self.schedule_task("evict", 5)
 
             # Check fragmentation ratio and schedule accordingly
             frag_ratio = memory_stats.get("fragmentation_ratio", 0)
-            if frag_ratio > 0.5:  # Severe fragmentation
-                self.schedule_task("rebuild", priority=2)
-            elif frag_ratio > 0.3:  # Moderate fragmentation
-                self.schedule_task("rebuild", priority=3)
+            if frag_ratio > 0.3:  # Moderate fragmentation
+                self.schedule_task("rebuild")
 
             with self.lock:
                 self.maintenance_runs += 1

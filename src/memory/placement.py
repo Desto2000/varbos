@@ -1,8 +1,6 @@
 import bisect
 import threading
 
-from src.memory.core.ops import combined_fit
-
 
 class PlacementPolicy:
     """Interface for memory allocation strategies"""
@@ -59,7 +57,17 @@ class BestFitPlacementPolicy(PlacementPolicy):
             if size <= 0:
                 raise ValueError("Allocation size must be positive")
 
-            best_block = combined_fit(self.free_blocks, size)
+            # Find best-fit block
+            suitable_blocks = [
+                (block_size, addr)
+                for block_size, addr in self.free_blocks
+                if block_size >= size
+            ]
+            if not suitable_blocks:
+                return None  # No suitable block found
+
+            # Find smallest block that fits
+            best_block = min(suitable_blocks, key=lambda x: x[0])
             block_size, start_address = best_block
 
             # Remove this block from free list

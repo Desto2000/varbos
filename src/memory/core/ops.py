@@ -23,17 +23,26 @@ def parallel_memcpy(src, dest, length):
     return length
 
 
-@njit()
+@njit
 def combined_fit(free_blocks, size):
-    suitable_blocks = [
-        (block_size, addr) for block_size, addr in free_blocks if block_size >= size
-    ]
-    if not suitable_blocks:
-        return None  # No suitable block found
+    """Find smallest block that fits the requested size"""
+    if len(free_blocks) == 0:
+        return (-1, -1)  # No blocks available
 
-    # Find smallest block that fits
-    best_block = min(suitable_blocks, key=lambda x: x[0])
-    return best_block
+    best_size = -1
+    best_addr = -1
+
+    # Manually find the smallest block that fits
+    for block_size, addr in free_blocks:
+        if block_size >= size:
+            if best_size == -1 or block_size < best_size:
+                best_size = block_size
+                best_addr = addr
+
+    if best_size == -1:
+        return (-1, -1)  # No suitable block found
+
+    return (best_size, best_addr)
 
 
 @njit

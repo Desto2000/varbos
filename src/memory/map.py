@@ -161,7 +161,7 @@ class Memory:
             self.lock_policy.release_write(key)
 
     def __delitem__(self, key):
-        """Delete item from memory - optimized for performance"""
+        """Delete item from memory (optimized)"""
         self.lock_policy.acquire_write(key)
         try:
             if key not in self.lookup_table:
@@ -170,19 +170,23 @@ class Memory:
             start, end = self.lookup_table[key]
             size = end - start
 
-            # Remove from lookup table immediately (most expensive operation)
+            # Remove from lookup table
             del self.lookup_table[key]
 
-            # Batch operations: update policy first (likely faster than deallocate)
+            # Track deleted keys to avoid reprocessing
+            with self._deletion_lock:
+                self._deleted_keys.add(key)
+                # Cap the size of the deleted keys set
+                if len(self._deleted_keys) > 10000:
+                    # Remove oldest entries (approximation)
+                    to_remove = len(self._deleted_keys) - 5000
+                    self._deleted_keys = set(list(self._deleted_keys)[to_remove:])
+
+            # Update eviction policy
             self.eviction_policy.on_remove(key)
 
-            # Direct deallocate instead of background scheduling
-            # This is faster for small objects and avoids queue overhead
-            if size < 1024:  # Small objects get immediate deallocation
-                self.placement_policy.deallocate(start, size)
-            else:
-                # Only schedule large deallocations which could block the main thread
-                self.thread_manager.schedule_task("free", (start, size))
+            # Schedule background deallocation
+            self.thread_manager.schedule_task("free", (start, size))
 
         finally:
             self.lock_policy.release_write(key)
@@ -221,10 +225,10 @@ class Memory:
             return False
 
     def _rebuild_internal(self):
-        """Internal method to rebuild memory (thread-safe implementation)"""
+        """Internal method to rebuild memory (called by thread manager)"""
         self.lock_policy.acquire_write(None)  # Global lock
         try:
-            # Get current allocated blocks - make a copy to avoid iteration issues
+            # Get current allocated blocks
             allocated_blocks = [
                 (start, end) for start, end in self.lookup_table.values()
             ]
@@ -240,9 +244,9 @@ class Memory:
             if result:
                 old_locations, new_locations = result
 
-                # Create a safer reversed lookup (old location -> key)
+                # Create reverse mapping from old locations to keys
                 location_to_key = {}
-                for key, (start, end) in list(self.lookup_table.items()):
+                for key, (start, end) in self.lookup_table.items():
                     location_to_key[(start, end)] = key
 
                 # Move data to new locations

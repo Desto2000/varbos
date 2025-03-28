@@ -29,7 +29,7 @@ class NucleosManager:
         # Use thread local storage for per-thread caching
         self.thread_local = threading.local()
 
-    def schedule_task(self, task_type, args=None, priority=5, timeout=None):
+    def schedule_task(self, task_type, args=None, priority=5):
         """Schedule task with priority (lower = higher priority)"""
         if self.shutdown_flag:
             return None

@@ -2,32 +2,40 @@ import numpy as np
 
 
 class FastLookupTable:
-    """
-    Optimized lookup table with O(1) access patterns and proper container methods
-    """
+    """High-performance lookup table with O(1) access patterns"""
 
-    def __init__(self, initial_capacity=1024):
+    def __init__(self, initial_capacity=4096):  # Larger initial capacity
         self._keys = {}  # Dictionary mapping keys to indices
         self._values_array = np.zeros(
             (initial_capacity, 2), dtype=np.int64
         )  # Array of (start, end) tuples
         self._size = 0
         self._capacity = initial_capacity
-        # Numba acceleration is disabled by default
-        self._numba_enabled = False
-        self._numba_dict = None
+
+        # Prefetch optimization
+        self._last_access_key = None
+        self._last_access_idx = -1
 
     def __contains__(self, key):
         """Check if key exists in the lookup table"""
-        # We'll use the standard Python dictionary for lookups
-        # as it's already very fast and avoids type issues
+        # Fast path: check if it matches last accessed key
+        if key == self._last_access_key:
+            return True
         return key in self._keys
 
     def __getitem__(self, key):
         """Get the (start, end) tuple for a key"""
+        # Fast path: check if it matches last accessed key
+        if key == self._last_access_key:
+            return tuple(self._values_array[self._last_access_idx])
+
         if key not in self._keys:
             raise KeyError(f"Key {key} not found in lookup table")
+
         idx = self._keys[key]
+        # Update cache for future lookups
+        self._last_access_key = key
+        self._last_access_idx = idx
         return tuple(self._values_array[idx])
 
     def __setitem__(self, key, value):
@@ -42,15 +50,29 @@ class FastLookupTable:
                 self._resize()
             self._keys[key] = self._size
             self._values_array[self._size] = value
+
+            # Update cache for future lookups
+            self._last_access_key = key
+            self._last_access_idx = self._size
+
             self._size += 1
         else:
             idx = self._keys[key]
             self._values_array[idx] = value
 
+            # Update cache
+            self._last_access_key = key
+            self._last_access_idx = idx
+
     def __delitem__(self, key):
-        """Delete a key from the lookup table"""
+        """Delete a key from the lookup table - optimized"""
         if key not in self._keys:
             raise KeyError(f"Key {key} not found in lookup table")
+
+        # Invalidate cache if we're removing the cached key
+        if key == self._last_access_key:
+            self._last_access_key = None
+            self._last_access_idx = -1
 
         # Get index of item to remove
         idx_to_remove = self._keys[key]
@@ -58,15 +80,15 @@ class FastLookupTable:
         # Remove from keys dictionary
         del self._keys[key]
 
-        # If we're removing the last item, just decrement size
+        # Special case: If removing the last item, just decrement size
         if idx_to_remove == self._size - 1:
             self._size -= 1
             return
 
-        # Otherwise, move the last item to fill the gap
+        # Find which key points to the last index
         last_idx = self._size - 1
 
-        # Find which key points to the last index
+        # Find last key more efficiently with a value lookup
         last_key = None
         for k, idx in self._keys.items():
             if idx == last_idx:
@@ -78,6 +100,10 @@ class FastLookupTable:
             self._values_array[idx_to_remove] = self._values_array[last_idx]
             # Update the key's index
             self._keys[last_key] = idx_to_remove
+
+            # Update cache if needed
+            if last_key == self._last_access_key:
+                self._last_access_idx = idx_to_remove
 
         # Decrement size
         self._size -= 1

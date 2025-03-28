@@ -2,35 +2,20 @@ import numpy as np
 from numba import njit, prange
 
 
-@njit(parallel=True)
+@njit(parallel=True, fastmath=True, cache=True)
 def parallel_memcpy(src, dest, length):
-    """Parallelized memory copy operation with enhanced performance"""
-    # Determine optimal chunk size based on data size
-    if length <= 256:
-        # For small data, avoid parallelization overhead
+    """Parallelized memory copy operation with adaptive optimization"""
+    # Small data optimization - avoid parallelization overhead
+    if length < 256:
         for j in range(length):
             dest[j] = src[j]
         return length
 
-    # Process in chunks for better cache performance
-    # Use power of 2 for chunk size to optimize cache access
-    chunk_size = 1024
-    while chunk_size * 4 > length and chunk_size > 64:
-        chunk_size = chunk_size // 2
-
-    # Number of chunks
-    num_chunks = (length + chunk_size - 1) // chunk_size
-
-    # Copy in parallel chunks
-    for i in prange(num_chunks):
-        start = i * chunk_size
-        end = min(start + chunk_size, length)
-
-        # Process 8 elements at a time when possible
-        main_end = start + ((end - start) // 8) * 8
-
-        # Main unrolled loop for better performance
-        for j in range(start, main_end, 8):
+    # Medium data optimization - use unrolled loops
+    elif length < 16384:  # 16KB threshold
+        # Process in 8-byte chunks
+        main_part = (length // 8) * 8
+        for j in range(0, main_part, 8):
             dest[j] = src[j]
             dest[j + 1] = src[j + 1]
             dest[j + 2] = src[j + 2]
@@ -40,9 +25,42 @@ def parallel_memcpy(src, dest, length):
             dest[j + 6] = src[j + 6]
             dest[j + 7] = src[j + 7]
 
-        # Handle remaining elements
-        for j in range(main_end, end):
+        # Handle remaining bytes
+        for j in range(main_part, length):
             dest[j] = src[j]
+
+        return length
+
+    # Large data - use parallel processing with optimal chunk size
+    else:
+        # Optimize chunk size for cache efficiency (L1 cache ~32KB on many CPUs)
+        chunk_size = 8192  # 8KB chunks
+
+        # Number of chunks
+        num_chunks = (length + chunk_size - 1) // chunk_size
+
+        # Copy in parallel chunks
+        for i in prange(num_chunks):
+            start = i * chunk_size
+            end = min(start + chunk_size, length)
+
+            # Use 8-byte chunks within each parallel section
+            main_part = start + ((end - start) // 8) * 8
+
+            # Unrolled copy loop for better performance
+            for j in range(start, main_part, 8):
+                dest[j] = src[j]
+                dest[j + 1] = src[j + 1]
+                dest[j + 2] = src[j + 2]
+                dest[j + 3] = src[j + 3]
+                dest[j + 4] = src[j + 4]
+                dest[j + 5] = src[j + 5]
+                dest[j + 6] = src[j + 6]
+                dest[j + 7] = src[j + 7]
+
+            # Handle remainder
+            for j in range(main_part, end):
+                dest[j] = src[j]
 
     return length
 

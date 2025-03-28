@@ -71,25 +71,8 @@ class DirectMemory:
         else:
             raise TypeError(f"Invalid index type: {type(key)}")
 
-    def clear(self, start=0, size=None):
-        """Clear a region of memory (set to zeros)"""
-        if size is None:
-            size = self.size - start
-
-        if size <= 0:
-            return
-
-        # Optimize small regions by direct assignment
-        if size <= 1024:
-            self._view[start : start + size] = b"\0" * size
-        else:
-            # For large regions, use numpy's fast zero filling
-            if self._np_view is None:
-                self._np_view = np.frombuffer(self._buffer, dtype=np.uint8)
-            self._np_view[start : start + size] = 0
-
     def get_numpy_view(self, start=0, size=None, dtype=np.uint8):
-        """Get a numpy view of the memory region with specified dtype"""
+        """Get zero-copy numpy view of memory region"""
         if size is None:
             size = self.size - start
 
@@ -104,3 +87,31 @@ class DirectMemory:
 
         # Create a view with the requested dtype
         return np.frombuffer(self._buffer[start : start + size], dtype=dtype)
+
+    def clear(self, start=0, size=None):
+        """Clear memory region - optimized for different sizes"""
+        if size is None:
+            size = self.size - start
+
+        if size <= 0:
+            return
+
+        # Fast path for small regions
+        if size <= 1024:
+            self._view[start : start + size] = b"\0" * size
+        # Medium regions - use memoryview
+        elif size <= 1_048_576:  # 1MB
+            zeros = bytearray(min(size, 65536))  # 64KB zero buffer
+            remaining = size
+            pos = start
+
+            while remaining > 0:
+                chunk = min(remaining, len(zeros))
+                self._view[pos : pos + chunk] = zeros[:chunk]
+                pos += chunk
+                remaining -= chunk
+        # Large regions - use numpy for vectorized zeroing
+        else:
+            if self._np_view is None:
+                self._np_view = np.frombuffer(self._buffer, dtype=np.uint8)
+            self._np_view[start : start + size] = 0

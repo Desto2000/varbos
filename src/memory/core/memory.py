@@ -10,6 +10,8 @@ class DirectMemory:
         self._buffer = bytearray(size_bytes)
         # Create view for faster operations
         self._view = memoryview(self._buffer)
+        # Cache numpy view for faster numpy operations
+        self._np_view = None
 
     def __getitem__(self, key):
         """Get data from buffer - supports slice and integer indexing"""
@@ -26,7 +28,7 @@ class DirectMemory:
                 raise IndexError(
                     f"Index {key} out of bounds for buffer size {self.size}"
                 )
-            return self._view[key : key + 1]
+            return self._view[key]
         else:
             raise TypeError(f"Invalid index type: {type(key)}")
 
@@ -46,11 +48,14 @@ class DirectMemory:
             if isinstance(value, (bytes, bytearray, memoryview)):
                 self._view[start:stop] = value
             elif isinstance(value, np.ndarray):
-                # Ensure the array is contiguous and has the right type
-                if not value.flags.c_contiguous:
-                    value = np.ascontiguousarray(value)
-                # Copy the bytes
-                self._view[start:stop] = value.tobytes()
+                # Use zero-copy approach where possible
+                if value.nbytes <= (stop - start):
+                    # Direct copy when data fits
+                    data_view = memoryview(value).cast("B")
+                    self._view[start : start + len(data_view)] = data_view
+                else:
+                    # Fallback to standard copy
+                    self._view[start:stop] = value.tobytes()[: stop - start]
             else:
                 # Try to convert to bytes
                 self._view[start:stop] = bytes(value)
@@ -70,4 +75,32 @@ class DirectMemory:
         """Clear a region of memory (set to zeros)"""
         if size is None:
             size = self.size - start
-        self._view[start : start + size] = b"\0" * size
+
+        if size <= 0:
+            return
+
+        # Optimize small regions by direct assignment
+        if size <= 1024:
+            self._view[start : start + size] = b"\0" * size
+        else:
+            # For large regions, use numpy's fast zero filling
+            if self._np_view is None:
+                self._np_view = np.frombuffer(self._buffer, dtype=np.uint8)
+            self._np_view[start : start + size] = 0
+
+    def get_numpy_view(self, start=0, size=None, dtype=np.uint8):
+        """Get a numpy view of the memory region with specified dtype"""
+        if size is None:
+            size = self.size - start
+
+        # Ensure we can create a view with the given dtype
+        dtype_size = np.dtype(dtype).itemsize
+        if size % dtype_size != 0:
+            # Adjust size to be a multiple of the dtype size
+            size = (size // dtype_size) * dtype_size
+
+        if start < 0 or start + size > self.size:
+            raise IndexError(f"Region [{start}:{start+size}] is out of bounds")
+
+        # Create a view with the requested dtype
+        return np.frombuffer(self._buffer[start : start + size], dtype=dtype)

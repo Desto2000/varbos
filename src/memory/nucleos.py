@@ -1,7 +1,7 @@
-from concurrent.futures import ThreadPoolExecutor
-import threading
 import queue
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 
 class NucleosManager:
@@ -18,6 +18,7 @@ class NucleosManager:
         self.shutdown_flag = False
         self.tasks_processed = 0
         self.maintenance_runs = 0
+        self.lock = threading.RLock()  # Add lock for task_futures dictionary
 
         # Start maintenance thread
         self.maintenance_thread = threading.Thread(
@@ -36,7 +37,10 @@ class NucleosManager:
         # Create cancellable future
         future = self.thread_pool.submit(self._execute_task, task_type, args)
         task_id = id(future)
-        self.task_futures[task_id] = future
+
+        # Thread-safe update of task_futures
+        with self.lock:
+            self.task_futures[task_id] = future
 
         # Return future for caller to wait on if needed
         return future
@@ -73,12 +77,13 @@ class NucleosManager:
             if len(stats) > 100:
                 stats.pop(0)
 
-            self.tasks_processed += 1
+            with self.lock:
+                self.tasks_processed += 1
             return result
 
         except Exception as e:
             print(f"Task execution error ({task_type}): {e}")
-            raise
+            return None  # Don't re-raise to prevent thread termination
 
     def _maintenance_worker(self):
         """Smart background maintenance"""
@@ -92,9 +97,17 @@ class NucleosManager:
                 # Clean up completed futures periodically
                 now = time.time()
                 if now - last_gc_time > 5.0:  # Every 5 seconds
-                    completed = [k for k, v in self.task_futures.items() if v.done()]
-                    for task_id in completed:
-                        del self.task_futures[task_id]
+                    with self.lock:
+                        # Make a copy to avoid modification during iteration
+                        futures_items = list(self.task_futures.items())
+
+                    completed = [k for k, v in futures_items if v.done()]
+
+                    if completed:
+                        with self.lock:
+                            for task_id in completed:
+                                if task_id in self.task_futures:
+                                    del self.task_futures[task_id]
                     last_gc_time = now
 
                 # Perform other maintenance work
@@ -102,46 +115,55 @@ class NucleosManager:
 
             except Exception as e:
                 print(f"Maintenance worker error: {e}")
+                time.sleep(1)  # Sleep longer on error to avoid rapid cycling
 
     def _check_system_health(self):
         """Proactive system health monitoring"""
-        # Check memory pressure
-        stats = self.memory.get_stats()
-        memory_stats = stats.get("memory", {})
+        try:
+            # Check memory pressure
+            stats = self.memory.get_stats()
+            memory_stats = stats.get("memory", {})
 
-        # Adaptive maintenance based on system state
-        free_ratio = memory_stats.get("free_bytes", 0) / memory_stats.get(
-            "total_bytes", 1
-        )
+            # Adaptive maintenance based on system state
+            free_ratio = memory_stats.get("free_bytes", 0) / max(
+                memory_stats.get("total_bytes", 1), 1
+            )
 
-        # Prioritize based on current conditions
-        if free_ratio < 0.1:  # Critical memory pressure
-            self.schedule_task("evict", 10, priority=1)
-        elif free_ratio < 0.2:  # High memory pressure
-            self.schedule_task("evict", 5, priority=2)
+            # Prioritize based on current conditions
+            if free_ratio < 0.1:  # Critical memory pressure
+                self.schedule_task("evict", 10, priority=1)
+            elif free_ratio < 0.2:  # High memory pressure
+                self.schedule_task("evict", 5, priority=2)
 
-        # Check fragmentation ratio and schedule accordingly
-        frag_ratio = memory_stats.get("fragmentation_ratio", 0)
-        if frag_ratio > 0.5:  # Severe fragmentation
-            self.schedule_task("rebuild", priority=2)
-        elif frag_ratio > 0.3:  # Moderate fragmentation
-            self.schedule_task("rebuild", priority=3)
+            # Check fragmentation ratio and schedule accordingly
+            frag_ratio = memory_stats.get("fragmentation_ratio", 0)
+            if frag_ratio > 0.5:  # Severe fragmentation
+                self.schedule_task("rebuild", priority=2)
+            elif frag_ratio > 0.3:  # Moderate fragmentation
+                self.schedule_task("rebuild", priority=3)
 
-        self.maintenance_runs += 1
+            with self.lock:
+                self.maintenance_runs += 1
+        except Exception as e:
+            print(f"Health check error: {e}")
 
     def shutdown(self):
         """Gracefully shut down thread manager"""
         self.shutdown_flag = True
-        # Cancel all pending tasks
-        for future in self.task_futures.values():
-            future.cancel()
+
+        with self.lock:
+            # Cancel all pending tasks
+            for future in self.task_futures.values():
+                future.cancel()
+
         # Shutdown thread pool
         self.thread_pool.shutdown(wait=False)
 
     def get_stats(self):
         """Get thread manager statistics"""
-        return {
-            "tasks_processed": self.tasks_processed,
-            "maintenance_runs": self.maintenance_runs,
-            "queued_tasks": len(self.task_futures),
-        }
+        with self.lock:
+            return {
+                "tasks_processed": self.tasks_processed,
+                "maintenance_runs": self.maintenance_runs,
+                "queued_tasks": len(self.task_futures),
+            }

@@ -1,114 +1,16 @@
-import mmap
 import queue
 import threading
 
-import pymm
 import numpy as np
 import pyarrow as pa
 
+from src.memory.core.fast_access import FastLookupTable
+from src.memory.core.memory import DirectMemory
 from src.memory.eviction import LRUEvictionPolicy
 from src.memory.head import SimpleHeadPolicy
+from src.memory.nucleos import NucleosManager
 from src.memory.placement import BestFitPlacementPolicy
-from src.memory.sync import SimpleLockPolicy
-
-
-class MemoryThreadManager:
-    """Manages background threads for memory operations"""
-
-    def __init__(self, memory_instance):
-        self.memory = memory_instance
-        self.task_queue = queue.Queue()
-        self.shutdown_flag = False
-
-        # Start worker thread
-        self.worker = threading.Thread(target=self._background_worker, daemon=True)
-        self.worker.start()
-
-        # Statistics
-        self.tasks_processed = 0
-        self.maintenance_runs = 0
-
-    def schedule_task(self, task_type, args=None, urgent=False):
-        """Schedule a task for background processing"""
-        task = (task_type, args)
-        if urgent:
-            # For urgent tasks, use a new thread to ensure immediate processing
-            thread = threading.Thread(target=self._process_task, args=(task,))
-            thread.daemon = True
-            thread.start()
-        else:
-            self.task_queue.put(task)
-
-    def _background_worker(self):
-        """Background thread for processing tasks"""
-        while not self.shutdown_flag:
-            try:
-                # Try to get a task with timeout to allow checking shutdown flag
-                try:
-                    task = self.task_queue.get(timeout=0.1)
-                    self._process_task(task)
-                except queue.Empty:
-                    # No tasks, check if maintenance is needed
-                    self._check_maintenance()
-            except Exception as e:
-                print(f"Error in background worker: {e}")
-
-    def _process_task(self, task):
-        """Process a memory management task"""
-        task_type, args = task
-
-        try:
-            if task_type == "free":
-                start, size = args
-                self.memory._deallocate_internal(start, size)
-
-            elif task_type == "rebuild":
-                self.memory._rebuild_internal()
-
-            elif task_type == "evict":
-                count = args if args is not None else 1
-                self.memory._evict_internal(count)
-
-            self.tasks_processed += 1
-
-        except Exception as e:
-            print(f"Error processing task {task_type}: {e}")
-
-    def _check_maintenance(self):
-        """Check if maintenance tasks are needed"""
-        try:
-            # Check memory stats to see if maintenance is needed
-            stats = self.memory.get_stats()
-            memory_stats = stats.get("memory", {})
-
-            # If high fragmentation, schedule rebuild
-            if memory_stats.get("fragmentation_ratio", 0) > 0.3:
-                self.schedule_task("rebuild")
-
-            # If low free space, schedule eviction
-            free_ratio = memory_stats.get("free_bytes", 0) / memory_stats.get(
-                "total_bytes", 1
-            )
-            if free_ratio < 0.2:
-                self.schedule_task("evict", 5)  # Evict 5 items
-
-            self.maintenance_runs += 1
-
-        except Exception as e:
-            print(f"Error in maintenance check: {e}")
-
-    def shutdown(self):
-        """Shutdown the thread manager"""
-        self.shutdown_flag = True
-        self.worker.join(timeout=2.0)
-
-    def get_stats(self):
-        """Get thread manager statistics"""
-        return {
-            "tasks_processed": self.tasks_processed,
-            "maintenance_runs": self.maintenance_runs,
-            "queued_tasks": self.task_queue.qsize(),
-        }
+from src.memory.sync import HybridLockManager
 
 
 class Memory:
@@ -135,14 +37,12 @@ class Memory:
         """
         # Initialize memory
         self.memory_size = memory_size
-        size_gb = max(1, memory_size / (1024 * 1024 * 1024))
-        self.shelf = pymm.shelf("memory_pool", size_gb=size_gb)
-        self.mem = self.shelf.root  # Replace mmap with PMDK memory
+        self.mem = DirectMemory(self.memory_size)
 
         self.buffer_pool = pa.default_memory_pool()
 
         # Set up policies (with defaults if not provided)
-        self.lock_policy = lock_policy or SimpleLockPolicy()
+        self.lock_policy = lock_policy or HybridLockManager()
         self.eviction_policy = eviction_policy or LRUEvictionPolicy()
         self.placement_policy = placement_policy or BestFitPlacementPolicy()
 
@@ -152,10 +52,10 @@ class Memory:
         self.placement_policy.initialize(memory_size)
 
         # Key to memory location mapping
-        self.lookup_table = {}  # key -> (start, end)
+        self.lookup_table = FastLookupTable()  # key -> (start, end)
 
         # Start thread manager
-        self.thread_manager = MemoryThreadManager(self)
+        self.thread_manager = NucleosManager(self)
 
         # Statistics
         self.evictions = 0

@@ -1,9 +1,12 @@
 import bisect
 import threading
 
+from src.memory.core.ops import combined_fit
+
 
 class PlacementPolicy:
     """Interface for memory allocation strategies"""
+
     def initialize(self, memory_size):
         """Initialize memory blocks"""
         pass
@@ -27,6 +30,7 @@ class PlacementPolicy:
 
 class BestFitPlacementPolicy(PlacementPolicy):
     """Best-fit memory allocation strategy"""
+
     def __init__(self, fragmentation_threshold=0.3):
         self.free_blocks = []  # (size, start_address)
         self.fragmentation_threshold = fragmentation_threshold
@@ -40,7 +44,9 @@ class BestFitPlacementPolicy(PlacementPolicy):
         """Get all memory blocks (both free and allocated) for visualization purposes"""
         with self.lock:
             # Return a copy to avoid threading issues
-            free_blocks = [(size, start, False) for size, start in self.free_blocks]  # size, start, is_allocated
+            free_blocks = [
+                (size, start, False) for size, start in self.free_blocks
+            ]  # size, start, is_allocated
             return free_blocks
 
     def initialize(self, memory_size):
@@ -53,13 +59,7 @@ class BestFitPlacementPolicy(PlacementPolicy):
             if size <= 0:
                 raise ValueError("Allocation size must be positive")
 
-            # Find best-fit block
-            suitable_blocks = [(block_size, addr) for block_size, addr in self.free_blocks if block_size >= size]
-            if not suitable_blocks:
-                return None  # No suitable block found
-
-            # Find smallest block that fits
-            best_block = min(suitable_blocks, key=lambda x: x[0])
+            best_block = combined_fit(self.free_blocks, size)
             block_size, start_address = best_block
 
             # Remove this block from free list
@@ -101,7 +101,9 @@ class BestFitPlacementPolicy(PlacementPolicy):
                 return False  # No rebuild needed
 
             # Step 1: Save current block information for tracking changes
-            old_locations = {(start, end): (start, end) for start, end in allocated_blocks}
+            old_locations = {
+                (start, end): (start, end) for start, end in allocated_blocks
+            }
             new_locations = {}
 
             # Step 2: Reset free blocks to one large block
@@ -126,7 +128,10 @@ class BestFitPlacementPolicy(PlacementPolicy):
                 self.free_blocks = [(remaining_size, current_position)]
 
             self.rebuilds += 1
-            return old_locations, new_locations  # Return mapping for actual data movement
+            return (
+                old_locations,
+                new_locations,
+            )  # Return mapping for actual data movement
 
     def _merge_free_blocks(self):
         """Merge adjacent free blocks"""
@@ -184,10 +189,19 @@ class BestFitPlacementPolicy(PlacementPolicy):
             return {
                 "free_bytes": total_free,
                 "free_blocks": len(self.free_blocks),
-                "largest_free_block": max((size for size, _ in self.free_blocks), default=0),
+                "largest_free_block": max(
+                    (size for size, _ in self.free_blocks), default=0
+                ),
                 "allocations": self.allocations,
                 "deallocations": self.deallocations,
                 "rebuilds": self.rebuilds,
-                "fragmentation_ratio": 1 - (max((size for size, _ in self.free_blocks), default=0) / total_free)
-                    if total_free > 0 else 0
+                "fragmentation_ratio": (
+                    1
+                    - (
+                        max((size for size, _ in self.free_blocks), default=0)
+                        / total_free
+                    )
+                    if total_free > 0
+                    else 0
+                ),
             }

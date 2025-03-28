@@ -217,7 +217,7 @@ class BestFitPlacementPolicy(PlacementPolicy):
             }
 
 
-@njit
+@njit(parallel=True)
 def find_best_bin(size, bin_sizes):
     """Find the best bin for a given size using binary search"""
     left, right = 0, len(bin_sizes) - 1

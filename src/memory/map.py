@@ -37,8 +37,6 @@ class Memory:
         self.memory_size = memory_size
         self.mem = DirectMemory(self.memory_size)
 
-        self.buffer_pool = pa.default_memory_pool()
-
         # Set up policies (with defaults if not provided)
         # For better performance based on benchmarks, use SimpleLockPolicy as default
         self.lock_policy = lock_policy or SimpleLockPolicy()

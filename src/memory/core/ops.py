@@ -1,5 +1,5 @@
 import numpy as np
-from numba import njit, prange
+from numba import jit, njit, prange
 
 
 @njit(parallel=True, fastmath=True, cache=True)
@@ -91,7 +91,7 @@ def combined_fit(free_blocks, size):
     return (best_size, best_addr)
 
 
-@njit
+@njit(fastmath=True, cache=True)
 def binary_search_first_fit(free_blocks, size_needed):
     """Find first block that fits size needed using binary search"""
     if len(free_blocks) == 0:
@@ -113,7 +113,7 @@ def binary_search_first_fit(free_blocks, size_needed):
     return result
 
 
-@njit
+@njit(parallel=True, fastmath=True, cache=True)
 def binary_search_best_fit(free_blocks, size_needed):
     """Find best fit block for size needed (optimized)"""
     if len(free_blocks) == 0:
@@ -123,7 +123,7 @@ def binary_search_best_fit(free_blocks, size_needed):
     min_waste = np.iinfo(np.int64).max
 
     # Skip blocks too small for faster selection
-    for i in range(len(free_blocks)):
+    for i in prange(len(free_blocks)):
         block_size = free_blocks[i][0]
         if block_size >= size_needed:
             waste = block_size - size_needed
@@ -138,7 +138,7 @@ def binary_search_best_fit(free_blocks, size_needed):
     return best_fit
 
 
-@njit
+@njit(parallel=True, fastmath=True, cache=True)
 def zero_memory(buffer, start, length):
     """
     Efficiently zero out a memory region
@@ -149,21 +149,21 @@ def zero_memory(buffer, start, length):
         length: Number of bytes to zero
     """
     # Handle small regions directly
-    if length <= 64:
-        for i in range(start, start + length):
-            buffer[i] = 0
+    if length <= 128:
+        for i in prange(start, start + length):
+            buffer[i] = b"\0"
         return
 
     # For larger regions, use block clearing
     end = start + length
-    step = 64  # Process 64 bytes at a time
+    step = 128  # Process 64 bytes at a time
 
     # Main loop for 64-byte blocks
     main_end = start + (length // step) * step
-    for pos in range(start, main_end, step):
-        for i in range(64):
+    for pos in prange(start, main_end, step):
+        for i in prange(128):
             buffer[pos + i] = 0
 
     # Handle remaining bytes
-    for pos in range(main_end, end):
+    for pos in prange(main_end, end):
         buffer[pos] = 0

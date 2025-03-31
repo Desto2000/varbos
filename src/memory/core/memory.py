@@ -1,17 +1,29 @@
+from typing import Optional
+
 import numpy as np
+
+from src.memory.core.ops import zero_memory
 
 
 class DirectMemory:
     """Direct memory access with proper buffer protocol support"""
 
     def __init__(self, size_bytes):
-        self.size = size_bytes
+        self.size: int = size_bytes
         # Use a bytearray as the backing store
-        self._buffer = bytearray(size_bytes)
+        self._buffer: bytearray = bytearray(size_bytes)
         # Create view for faster operations
-        self._view = memoryview(self._buffer)
-        # Cache numpy view for faster numpy operations
-        self._np_view = None
+        self._view: memoryview = memoryview(self._buffer)
+        # Cache numpy view for faster numpy operations (lazy init)
+        self._np_view: Optional[np.ndarray] = None
+
+    def __buffer__(self):
+        """Support for Python's buffer protocol"""
+        return self._buffer
+
+    def __len__(self) -> int:
+        """Return the size of the memory buffer in bytes."""
+        return self.size
 
     def __getitem__(self, key):
         """Get data from buffer - supports slice and integer indexing"""
@@ -22,13 +34,13 @@ class DirectMemory:
                 raise IndexError(
                     f"Index out of bounds: [{start}:{stop}] for buffer size {self.size}"
                 )
-            return self._view[start:stop]
+            return bytes(self._view[start:stop])
         elif isinstance(key, int):
             if key < 0 or key >= self.size:
                 raise IndexError(
                     f"Index {key} out of bounds for buffer size {self.size}"
                 )
-            return self._view[key]
+            return bytes(self._view[key])
         else:
             raise TypeError(f"Invalid index type: {type(key)}")
 
@@ -96,22 +108,4 @@ class DirectMemory:
         if size <= 0:
             return
 
-        # Fast path for small regions
-        if size <= 1024:
-            self._view[start : start + size] = b"\0" * size
-        # Medium regions - use memoryview
-        elif size <= 1_048_576:  # 1MB
-            zeros = bytearray(min(size, 65536))  # 64KB zero buffer
-            remaining = size
-            pos = start
-
-            while remaining > 0:
-                chunk = min(remaining, len(zeros))
-                self._view[pos : pos + chunk] = zeros[:chunk]
-                pos += chunk
-                remaining -= chunk
-        # Large regions - use numpy for vectorized zeroing
-        else:
-            if self._np_view is None:
-                self._np_view = np.frombuffer(self._buffer, dtype=np.uint8)
-            self._np_view[start : start + size] = 0
+        zero_memory(self._buffer, start, size)

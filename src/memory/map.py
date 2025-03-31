@@ -68,7 +68,7 @@ class Memory:
             raise KeyError(f"Key '{key}' not found")
 
         start, end = self.lookup_table[key]
-        data = memoryview(self.mem[start:end])
+        data = self.mem[start:end]
 
         # Update access tracking (asynchronously)
         self.eviction_policy.on_access(key)
@@ -329,6 +329,8 @@ class Memory:
             # Update eviction policy
             for key in keys:
                 self.eviction_policy.on_remove(key)
+
+            self.mem.clear(0)
 
         finally:
             self.lock_policy.release_write(None)

@@ -1,8 +1,6 @@
 import bisect
 import threading
 
-from numba import njit
-
 
 class PlacementPolicy:
     """Interface for memory allocation strategies"""
@@ -215,23 +213,6 @@ class BestFitPlacementPolicy(PlacementPolicy):
                     else 0
                 ),
             }
-
-
-@njit(parallel=True)
-def find_best_bin(size, bin_sizes):
-    """Find the best bin for a given size using binary search"""
-    left, right = 0, len(bin_sizes) - 1
-    best_fit = -1
-
-    while left <= right:
-        mid = (left + right) // 2
-        if bin_sizes[mid] >= size:
-            best_fit = mid
-            right = mid - 1
-        else:
-            left = mid + 1
-
-    return best_fit
 
 
 class BuddyAllocator(PlacementPolicy):

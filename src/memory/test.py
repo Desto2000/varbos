@@ -301,7 +301,8 @@ def memory_fragmentation_test(memory, visualizer):
         try:
             # Try to allocate most of the free space
             allocation_size = int(free_bytes * 0.7)
-            memory["post_rebuild_block"] = b"x" * allocation_size
+            data = memoryview(b"x" * allocation_size).cast("B")
+            memory["post_rebuild_block"] = data
             print(f"Successfully allocated {allocation_size/1024:.1f}K after rebuild")
         except MemoryError:
             print("Still couldn't allocate large block after rebuild")

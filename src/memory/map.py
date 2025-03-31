@@ -1,14 +1,13 @@
 import threading
 
 import numpy as np
-import pyarrow as pa
 
 from src.memory.core.memory import DirectMemory
 from src.memory.eviction import LRUEvictionPolicy
 from src.memory.head import SimpleHeadPolicy
 from src.memory.nucleos import NucleosManager
-from src.memory.placement import BuddyAllocator
-from src.memory.sync import SimpleLockPolicy
+from src.memory.placement import BestFitPlacementPolicy
+from src.memory.sync import HybridLockManager
 
 
 class Memory:
@@ -39,9 +38,9 @@ class Memory:
 
         # Set up policies (with defaults if not provided)
         # For better performance based on benchmarks, use SimpleLockPolicy as default
-        self.lock_policy = lock_policy or SimpleLockPolicy()
+        self.lock_policy = lock_policy or HybridLockManager()
         self.eviction_policy = eviction_policy or LRUEvictionPolicy()
-        self.placement_policy = placement_policy or BuddyAllocator(self.memory_size)
+        self.placement_policy = placement_policy or BestFitPlacementPolicy()
 
         self.head = head_policy or SimpleHeadPolicy()
 
@@ -93,56 +92,11 @@ class Memory:
                 if key in self._deleted_keys:
                     self._deleted_keys.remove(key)
 
-            # If key exists, try to reuse the space
-            if key in self.lookup_table:
-                old_start, old_end = self.lookup_table[key]
-                old_size = old_end - old_start
+            status = self.do_already_exist(key, value)
+            if status:
+                return
 
-                # If new data fits in existing space, reuse it
-                if len(value) <= old_size:
-                    self.mem[old_start : old_start + len(value)] = value
-
-                    # If we have leftover space, deallocate it in background
-                    if len(value) < old_size:
-                        leftover_start = old_start + len(value)
-                        leftover_size = old_size - len(value)
-
-                        # Update lookup table
-                        self.lookup_table[key] = (old_start, leftover_start)
-
-                        # Schedule background cleanup
-                        self.thread_manager.schedule_task(
-                            "free", (leftover_start, leftover_size)
-                        )
-
-                    # Update eviction policy
-                    self.eviction_policy.on_access(key)
-                    return
-
-                # New data doesn't fit - deallocate old space (in background)
-                self.thread_manager.schedule_task("free", (old_start, old_size))
-
-            # Allocate new space
-            result = self.placement_policy.allocate(len(value))
-
-            # If allocation failed, try eviction and rebuilding
-            if result is None:
-                # Try immediate eviction
-                self._evict_internal(1)
-
-                # Try allocation again
-                result = self.placement_policy.allocate(len(value))
-
-                # If still fails, try rebuilding
-                if result is None:
-                    self._rebuild_internal()
-                    result = self.placement_policy.allocate(len(value))
-
-                    # If still no space, we're out of memory
-                    if result is None:
-                        raise MemoryError(
-                            f"Not enough memory to store data ({len(value)} bytes)"
-                        )
+            result = self.allocate(len(value), key)
 
             # Write data to memory
             start, end = result
@@ -195,6 +149,63 @@ class Memory:
             return key in self.lookup_table
         finally:
             self.lock_policy.release_read(key)
+
+    def do_already_exist(self, key, value):
+        if key in self.lookup_table:
+            old_start, old_end = self.lookup_table[key]
+            old_size = old_end - old_start
+
+            # If new data fits in existing space, reuse it
+            if len(value) <= old_size:
+                self.mem[old_start : old_start + len(value)] = value
+
+                # If we have leftover space, deallocate it in background
+                if len(value) < old_size:
+                    leftover_start = old_start + len(value)
+                    leftover_size = old_size - len(value)
+
+                    # Update lookup table
+                    self.lookup_table[key] = (old_start, leftover_start)
+
+                    # Schedule background cleanup
+                    self.thread_manager.schedule_task(
+                        "free", (leftover_start, leftover_size)
+                    )
+
+                    # Update eviction policy
+                self.eviction_policy.on_access(key)
+                return True
+
+            # New data doesn't fit - deallocate old space (in background)
+            self.thread_manager.schedule_task("free", (old_start, old_size))
+            return False
+        else:
+            return False
+
+    def allocate(self, size, key):
+        # Allocate new space
+        result = self.placement_policy.allocate(size)
+
+        # If allocation failed, try eviction and rebuilding
+        if result is None:
+            # Try immediate eviction
+            self.lock_policy.release_write(key)
+            self._evict_internal(1)
+
+            # Try allocation again
+            result = self.placement_policy.allocate(size)
+
+            # If still fails, try rebuilding
+            if result is None:
+                self._rebuild_internal()
+                result = self.placement_policy.allocate(size)
+
+                # If still no space, we're out of memory
+                if result is None:
+                    raise MemoryError(f"Not enough memory to store data ({size} bytes)")
+            self.lock_policy.acquire_write(key)
+
+        return result
 
     def get(self, key, default=None):
         """Get item with default value if not found"""
@@ -267,9 +278,6 @@ class Memory:
 
                             # Update lookup table
                             self.lookup_table[key] = new_loc
-
-                print(f"Memory rebuilt: {len(allocated_blocks)} objects reorganized")
-
         finally:
             self.lock_policy.release_write(None)
 

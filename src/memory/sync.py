@@ -1,5 +1,4 @@
 import threading
-from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
@@ -73,25 +72,6 @@ class MultiLockStrategy(LockPolicy):
             self._get_lock_for_key(key).release()
 
 
-class SimpleLockPolicy(LockPolicy):
-    """Simple lock policy using a single RLock"""
-
-    def __init__(self):
-        self.lock = threading.RLock()
-
-    def acquire_read(self, key=None):
-        self.lock.acquire()
-
-    def release_read(self, key=None):
-        self.lock.release()
-
-    def acquire_write(self, key=None):
-        self.lock.acquire()
-
-    def release_write(self, key=None):
-        self.lock.release()
-
-
 class PartitionedLockPolicy(LockPolicy):
     """Lock policy that uses multiple locks based on key hash"""
 
@@ -119,7 +99,7 @@ class PartitionedLockPolicy(LockPolicy):
         self._get_lock(key).release()
 
 
-class ReaderWriterLock(LockPolicy):
+class SimpleLockPolicy(LockPolicy):
     """High-performance reader-writer lock with writer preference"""
 
     def __init__(self):
@@ -175,13 +155,8 @@ class HybridLockManager(LockPolicy):
     def __init__(self, partitions=64, thread_pool_size=None):
         # Increased number of partitions for less contention
         self.partitions = partitions
-        self.partition_locks = [ReaderWriterLock() for _ in range(partitions)]
-        self.global_lock = ReaderWriterLock()
-
-        # Thread pool for lock operations
-        self.pool = ThreadPoolExecutor(
-            max_workers=thread_pool_size or min(32, partitions)
-        )
+        self.partition_locks = [SimpleLockPolicy() for _ in range(partitions)]
+        self.global_lock = SimpleLockPolicy()
 
         # Stats
         self.contentions = 0

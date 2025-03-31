@@ -197,12 +197,7 @@ def main():
     configs = [
         (
             "Default",
-            Memory(
-                memory_size,
-                lock_policy=HybridLockManager(),
-                eviction_policy=LRUEvictionPolicy(),
-                placement_policy=BestFitPlacementPolicy(),
-            ),
+            Memory(memory_size),
         ),
         (
             "Simple Locking",

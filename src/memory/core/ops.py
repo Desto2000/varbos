@@ -1,5 +1,6 @@
 import numpy as np
-from numba import jit, njit, prange
+from numba import jit, njit, prange, types
+from numba.typed import List
 
 
 @njit(parallel=True, fastmath=True, cache=True)
@@ -65,7 +66,7 @@ def parallel_memcpy(src, dest, length):
     return length
 
 
-@njit
+@njit(cache=True)
 def combined_fit(free_blocks, size):
     """Find smallest block that fits the requested size (optimized)"""
     if len(free_blocks) == 0:
@@ -113,7 +114,8 @@ def binary_search_first_fit(free_blocks, size_needed):
     return result
 
 
-@njit(parallel=True, fastmath=True, cache=True)
+# FIXED: Remove parallel=True to address the warning, since the loop has early exit
+@njit(fastmath=True, cache=True)
 def binary_search_best_fit(free_blocks, size_needed):
     """Find best fit block for size needed (optimized)"""
     if len(free_blocks) == 0:
@@ -123,7 +125,7 @@ def binary_search_best_fit(free_blocks, size_needed):
     min_waste = np.iinfo(np.int64).max
 
     # Skip blocks too small for faster selection
-    for i in prange(len(free_blocks)):
+    for i in range(len(free_blocks)):
         block_size = free_blocks[i][0]
         if block_size >= size_needed:
             waste = block_size - size_needed
@@ -138,6 +140,82 @@ def binary_search_best_fit(free_blocks, size_needed):
     return best_fit
 
 
+# Optimized version of merge_free_blocks with consistent return type for Numba
+@njit(fastmath=True, cache=True)
+def merge_free_blocks_numba(blocks_array):
+    """Merge adjacent free blocks with consistent return type for Numba"""
+    if len(blocks_array) <= 1:
+        return blocks_array
+
+    # Sort blocks by address
+    # Create a sorted copy since we can't sort in-place with numba
+    sorted_indices = np.argsort(blocks_array[:, 1])
+    blocks_by_address = np.empty_like(blocks_array)
+
+    for i in range(len(sorted_indices)):
+        idx = sorted_indices[i]
+        blocks_by_address[i, 0] = blocks_array[idx, 0]  # size
+        blocks_by_address[i, 1] = blocks_array[idx, 1]  # address
+
+    # Merge adjacent blocks
+    result_size = 0
+    merged_blocks = np.empty_like(blocks_array)
+
+    i = 0
+    while i < len(blocks_by_address):
+        current_size = blocks_by_address[i, 0]
+        current_addr = blocks_by_address[i, 1]
+        current_end = current_addr + current_size
+
+        # Look for adjacent blocks
+        j = i + 1
+        while j < len(blocks_by_address):
+            next_addr = blocks_by_address[j, 1]
+
+            # If adjacent or overlapping
+            if next_addr <= current_end:
+                # Merge blocks
+                next_size = blocks_by_address[j, 0]
+                new_end = max(current_end, next_addr + next_size)
+                current_size = new_end - current_addr
+                current_end = new_end
+                j += 1
+            else:
+                # No more adjacent blocks
+                break
+
+        merged_blocks[result_size, 0] = current_size
+        merged_blocks[result_size, 1] = current_addr
+        result_size += 1
+        i = j
+
+    return merged_blocks[:result_size]
+
+
+# Python version to be called from Python code
+def merge_free_blocks(blocks_by_address):
+    """Python wrapper for merge_free_blocks_numba
+
+    Takes a list of tuples and returns a list of tuples
+    """
+    if len(blocks_by_address) <= 1:
+        return blocks_by_address
+
+    # Convert list of tuples to numpy array
+    blocks_array = np.array(blocks_by_address, dtype=np.int64)
+
+    # Call numba optimized function
+    result_array = merge_free_blocks_numba(blocks_array)
+
+    # Convert back to list of tuples
+    result = [
+        (result_array[i, 0], result_array[i, 1]) for i in range(len(result_array))
+    ]
+
+    # Return sorted by size for best-fit allocation
+    return sorted(result)
+
+
 @njit(parallel=True, fastmath=True, cache=True)
 def zero_memory(buffer, start, length):
     """
@@ -150,20 +228,68 @@ def zero_memory(buffer, start, length):
     """
     # Handle small regions directly
     if length <= 128:
-        for i in prange(start, start + length):
-            buffer[i] = b"\0"
+        for i in range(start, start + length):
+            buffer[i] = 0
         return
 
-    # For larger regions, use block clearing
+    # For larger regions, use block clearing with parallelization
     end = start + length
-    step = 128  # Process 64 bytes at a time
 
-    # Main loop for 64-byte blocks
-    main_end = start + (length // step) * step
-    for pos in prange(start, main_end, step):
-        for i in prange(128):
-            buffer[pos + i] = 0
+    # Optimize for cache line size (typically 64 bytes)
+    # Process in 64-byte chunks for better cache utilization
+    chunk_size = 64
+
+    # Calculate number of full chunks
+    full_chunks = length // chunk_size
+
+    # Process full chunks in parallel
+    if full_chunks > 1:
+        for chunk_idx in prange(full_chunks):
+            chunk_start = start + chunk_idx * chunk_size
+            for i in range(chunk_size):
+                buffer[chunk_start + i] = 0
 
     # Handle remaining bytes
-    for pos in prange(main_end, end):
-        buffer[pos] = 0
+    remainder_start = start + full_chunks * chunk_size
+    for i in range(remainder_start, end):
+        buffer[i] = 0
+
+
+# New function: optimized memset with value
+@njit(parallel=True, fastmath=True, cache=True)
+def memset(buffer, start, length, value=0):
+    """
+    Efficiently set memory region to a specific value
+
+    Args:
+        buffer: Memory buffer (supports buffer protocol)
+        start: Start position
+        length: Number of bytes to set
+        value: Value to set (default 0)
+    """
+    # Handle small regions directly
+    if length <= 128:
+        for i in range(start, start + length):
+            buffer[i] = value
+        return
+
+    # For larger regions, use block setting with parallelization
+    end = start + length
+
+    # Optimize for cache line size
+    chunk_size = 64
+
+    # Calculate number of full chunks
+    full_chunks = length // chunk_size
+
+    # Process full chunks in parallel
+    if full_chunks > 1:
+        for chunk_idx in prange(full_chunks):
+            chunk_start = start + chunk_idx * chunk_size
+            for i in range(chunk_size):
+                buffer[chunk_start + i] = value
+
+    # Handle remaining bytes
+    remainder_start = start + full_chunks * chunk_size
+    for i in range(remainder_start, end):
+        buffer[i] = value

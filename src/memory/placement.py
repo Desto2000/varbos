@@ -81,7 +81,7 @@ class BestFitPlacementPolicy(PlacementPolicy):
 
             end_address = start_address + size
             self.allocations += 1
-            return (start_address, end_address)
+            return start_address, end_address
 
     def deallocate(self, start, size):
         with self.lock:

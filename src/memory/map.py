@@ -4,7 +4,6 @@ import numpy as np
 
 from src.memory.core.memory import DirectMemory
 from src.memory.eviction import LRUEvictionPolicy
-from src.memory.head import SimpleHeadPolicy
 from src.memory.nucleos import NucleosManager
 from src.memory.placement import BestFitPlacementPolicy
 from src.memory.sync import HybridLockManager
@@ -42,8 +41,6 @@ class Memory:
         self.eviction_policy = eviction_policy or LRUEvictionPolicy()
         self.placement_policy = placement_policy or BestFitPlacementPolicy()
 
-        self.head = head_policy or SimpleHeadPolicy()
-
         # Initialize placement policy
         self.placement_policy.initialize(memory_size)
 
@@ -76,14 +73,17 @@ class Memory:
 
     def __setitem__(self, key, value):
         """Store item in memory - optimized for main thread performance"""
-        if not isinstance(value, (bytes, memoryview, np.ndarray)):
-            if isinstance(value, (bytearray)):
+        if not isinstance(value, (memoryview, np.ndarray)):
+            if isinstance(value, (bytearray, bytes)):
                 # Optimize for bytearray by using memoryview
                 value = memoryview(value)
             else:
-                raise TypeError(
-                    "Value must be bytes, memoryview, numpy array, or bytearray"
-                )
+                try:
+                    value = memoryview(bytes(value))
+                except Exception:
+                    raise TypeError(
+                        "Value must be bytes, memoryview, numpy array, or bytearray"
+                    )
 
         self.lock_policy.acquire_write(key)
         try:

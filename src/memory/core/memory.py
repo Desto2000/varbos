@@ -27,61 +27,24 @@ class DirectMemory:
 
     def __getitem__(self, key):
         """Get data from buffer - supports slice and integer indexing"""
-        if isinstance(key, slice):
-            start = key.start if key.start is not None else 0
-            stop = key.stop if key.stop is not None else self.size
-            if start < 0 or stop > self.size:
-                raise IndexError(
-                    f"Index out of bounds: [{start}:{stop}] for buffer size {self.size}"
-                )
-            return bytes(self._view[start:stop])
-        elif isinstance(key, int):
-            if key < 0 or key >= self.size:
-                raise IndexError(
-                    f"Index {key} out of bounds for buffer size {self.size}"
-                )
-            return bytes(self._view[key])
-        else:
-            raise TypeError(f"Invalid index type: {type(key)}")
+        return self._view[key]
 
     def __setitem__(self, key, value):
         """Set data in buffer - supports slice and integer indexing"""
-        if isinstance(key, slice):
-            start = key.start if key.start is not None else 0
-            stop = (
-                key.stop if key.stop is not None else min(start + len(value), self.size)
-            )
-            if start < 0 or stop > self.size:
-                raise IndexError(
-                    f"Index out of bounds: [{start}:{stop}] for buffer size {self.size}"
-                )
-
-            # Handle different value types
-            if isinstance(value, (bytes, bytearray, memoryview)):
-                self._view[start:stop] = value
-            elif isinstance(value, np.ndarray):
-                # Use zero-copy approach where possible
-                if value.nbytes <= (stop - start):
-                    # Direct copy when data fits
-                    data_view = memoryview(value).cast("B")
-                    self._view[start : start + len(data_view)] = data_view
-                else:
-                    # Fallback to standard copy
-                    self._view[start:stop] = value.tobytes()[: stop - start]
+        start = key.start
+        stop = key.stop
+        # Handle different value types
+        if isinstance(value, memoryview):
+            self._view[start:stop] = value
+        elif isinstance(value, np.ndarray):
+            # Use zero-copy approach where possible
+            if value.nbytes <= (stop - start):
+                # Direct copy when data fits
+                data_view = memoryview(value).cast("B")
+                self._view[start : start + len(data_view)] = data_view
             else:
-                # Try to convert to bytes
-                self._view[start:stop] = bytes(value)
-        elif isinstance(key, int):
-            if key < 0 or key >= self.size:
-                raise IndexError(
-                    f"Index {key} out of bounds for buffer size {self.size}"
-                )
-            if isinstance(value, int):
-                self._buffer[key] = value
-            else:
-                self._view[key : key + 1] = value
-        else:
-            raise TypeError(f"Invalid index type: {type(key)}")
+                # Fallback to standard copy
+                self._view[start:stop] = value.tobytes()[: stop - start]
 
     def get_numpy_view(self, start=0, size=None, dtype=np.uint8):
         """Get zero-copy numpy view of memory region"""

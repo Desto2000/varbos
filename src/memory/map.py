@@ -20,7 +20,7 @@ class Memory:
         lock_policy=None,
         eviction_policy=None,
         placement_policy=None,
-        head_policy=None,
+        workers=128,
     ):
         """
         Initialize the memory system.
@@ -48,17 +48,17 @@ class Memory:
         self.lookup_table = {}  # key -> (start, end)
 
         # Start thread manager
-        self.thread_manager = NucleosManager(self)
+        self.thread_manager = NucleosManager(self, workers)
 
         # Statistics
         self.evictions = 0
 
-        # For tracking deleted items to avoid reprocessing
         self._deleted_keys = set()
         self._deletion_lock = threading.RLock()
 
     def __getitem__(self, key):
         """Get item from memory - priority on main thread speed"""
+        self.lock_policy.acquire_read(key)
         if key not in self.lookup_table:
             self.eviction_policy.record_miss()
             raise KeyError(f"Key '{key}' not found")
@@ -68,6 +68,7 @@ class Memory:
 
         # Update access tracking (asynchronously)
         self.eviction_policy.on_access(key)
+        self.lock_policy.release_read(key)
 
         return data
 
@@ -87,7 +88,6 @@ class Memory:
 
         self.lock_policy.acquire_write(key)
         try:
-            # Check if this key was recently deleted
             with self._deletion_lock:
                 if key in self._deleted_keys:
                     self._deleted_keys.remove(key)
@@ -124,7 +124,6 @@ class Memory:
             # Remove from lookup table
             del self.lookup_table[key]
 
-            # Track deleted keys to avoid reprocessing
             with self._deletion_lock:
                 self._deleted_keys.add(key)
                 # Cap the size of the deleted keys set
@@ -191,6 +190,7 @@ class Memory:
             # Try immediate eviction
             self.lock_policy.release_write(key)
             self._evict_internal(1)
+            self.lock_policy.acquire_write(key)
 
             # Try allocation again
             result = self.placement_policy.allocate(size)
@@ -203,7 +203,6 @@ class Memory:
                 # If still no space, we're out of memory
                 if result is None:
                     raise MemoryError(f"Not enough memory to store data ({size} bytes)")
-            self.lock_policy.acquire_write(key)
 
         return result
 
@@ -327,7 +326,6 @@ class Memory:
             # Clear lookup table
             self.lookup_table.clear()
 
-            # Clear deleted keys tracking
             with self._deletion_lock:
                 self._deleted_keys.clear()
 

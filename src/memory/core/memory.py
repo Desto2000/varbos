@@ -14,8 +14,6 @@ class DirectMemory:
         self._buffer: bytearray = bytearray(size_bytes)
         # Create view for faster operations
         self._view: memoryview = memoryview(self._buffer)
-        # Cache numpy view for faster numpy operations (lazy init)
-        self._np_view: Optional[np.ndarray] = None
 
     def __buffer__(self):
         """Support for Python's buffer protocol"""
@@ -35,7 +33,12 @@ class DirectMemory:
         stop = key.stop
         # Handle different value types
         if isinstance(value, memoryview):
-            self._view[start:stop] = value
+            if value.nbytes < (stop - start):
+                # Direct copy when data fits
+                value = memoryview(
+                    value.tobytes() + b"\0" * ((stop - start) - value.nbytes)
+                )
+            self._view[start:stop] = value.cast("B")
         elif isinstance(value, np.ndarray):
             # Use zero-copy approach where possible
             if value.nbytes <= (stop - start):

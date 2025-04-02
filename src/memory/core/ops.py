@@ -142,40 +142,47 @@ def binary_search_best_fit(free_blocks, size_needed):
 
 # Optimized version of merge_free_blocks with consistent return type for Numba
 @njit(fastmath=True, cache=True)
-def merge_free_blocks_numba(blocks_array):
-    """Merge adjacent free blocks with consistent return type for Numba"""
+def merge_adjacent_blocks(blocks_array):
+    """
+    Merge adjacent free blocks with Numba acceleration
+
+    Args:
+        blocks_array: Numpy array of shape (n, 2) with (size, address) pairs
+
+    Returns:
+        Merged blocks array
+    """
     if len(blocks_array) <= 1:
         return blocks_array
 
     # Sort blocks by address
-    # Create a sorted copy since we can't sort in-place with numba
     sorted_indices = np.argsort(blocks_array[:, 1])
-    blocks_by_address = np.empty_like(blocks_array)
+    sorted_blocks = np.empty_like(blocks_array)
 
     for i in range(len(sorted_indices)):
         idx = sorted_indices[i]
-        blocks_by_address[i, 0] = blocks_array[idx, 0]  # size
-        blocks_by_address[i, 1] = blocks_array[idx, 1]  # address
+        sorted_blocks[i, 0] = blocks_array[idx, 0]  # size
+        sorted_blocks[i, 1] = blocks_array[idx, 1]  # address
 
-    # Merge adjacent blocks
+    # Merge adjacent blocks in a single pass
     result_size = 0
     merged_blocks = np.empty_like(blocks_array)
 
     i = 0
-    while i < len(blocks_by_address):
-        current_size = blocks_by_address[i, 0]
-        current_addr = blocks_by_address[i, 1]
+    while i < len(sorted_blocks):
+        current_size = sorted_blocks[i, 0]
+        current_addr = sorted_blocks[i, 1]
         current_end = current_addr + current_size
 
         # Look for adjacent blocks
         j = i + 1
-        while j < len(blocks_by_address):
-            next_addr = blocks_by_address[j, 1]
+        while j < len(sorted_blocks):
+            next_addr = sorted_blocks[j, 1]
 
             # If adjacent or overlapping
             if next_addr <= current_end:
                 # Merge blocks
-                next_size = blocks_by_address[j, 0]
+                next_size = sorted_blocks[j, 0]
                 new_end = max(current_end, next_addr + next_size)
                 current_size = new_end - current_addr
                 current_end = new_end
@@ -189,6 +196,7 @@ def merge_free_blocks_numba(blocks_array):
         result_size += 1
         i = j
 
+    # Return just the valid part of the array
     return merged_blocks[:result_size]
 
 
@@ -205,7 +213,7 @@ def merge_free_blocks(blocks_by_address):
     blocks_array = np.array(blocks_by_address, dtype=np.int64)
 
     # Call numba optimized function
-    result_array = merge_free_blocks_numba(blocks_array)
+    result_array = merge_adjacent_blocks(blocks_array)
 
     # Convert back to list of tuples
     result = [
@@ -253,6 +261,39 @@ def zero_memory(buffer, start, length):
     remainder_start = start + full_chunks * chunk_size
     for i in range(remainder_start, end):
         buffer[i] = 0
+
+
+@njit(fastmath=True, cache=True)
+def check_fragmentation(blocks_array, threshold):
+    """
+    Calculate fragmentation metrics and check against threshold
+
+    Args:
+        blocks_array: Numpy array of shape (n, 2) with (size, address) pairs
+        threshold: Fragmentation threshold (0.0-1.0)
+
+    Returns:
+        (fragmentation_ratio, is_high_fragmentation)
+    """
+    if len(blocks_array) <= 1:
+        return 0.0, False
+
+    # Calculate total free space and largest block
+    total_free = 0
+    largest_block = 0
+
+    for i in range(len(blocks_array)):
+        size = blocks_array[i, 0]
+        total_free += size
+        largest_block = max(largest_block, size)
+
+    # Calculate fragmentation ratio
+    if total_free > 0:
+        frag_ratio = 1.0 - (largest_block / total_free)
+    else:
+        frag_ratio = 0.0
+
+    return frag_ratio, frag_ratio > threshold
 
 
 # New function: optimized memset with value

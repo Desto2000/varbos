@@ -5,7 +5,7 @@ import numpy as np
 from src.memory.core.memory import DirectMemory
 from src.memory.eviction import LRUEvictionPolicy
 from src.memory.nucleos import NucleosManager
-from src.memory.placement import BestFitPlacementPolicy, BuddyAllocator
+from src.memory.placement import BestFitPlacementPolicy
 from src.memory.sync import HybridLockManager
 
 
@@ -58,7 +58,6 @@ class Memory:
 
     def __getitem__(self, key):
         """Get item from memory - priority on main thread speed"""
-        self.lock_policy.acquire_read(key)
         if key not in self.lookup_table:
             self.eviction_policy.record_miss()
             raise KeyError(f"Key '{key}' not found")
@@ -68,7 +67,6 @@ class Memory:
 
         # Update access tracking (asynchronously)
         self.eviction_policy.on_access(key)
-        self.lock_policy.release_read(key)
 
         return data
 

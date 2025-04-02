@@ -32,7 +32,6 @@ Varbos uses a modular architecture with the following key components:
 
 1. **Placement Policies**:
    - `BestFitPlacementPolicy`: Minimizes memory fragmentation
-   - `BuddyAllocator`: High-performance power-of-2 size classes allocation
 
 2. **Eviction Policies**:
    - `LRUEvictionPolicy`: Least Recently Used strategy

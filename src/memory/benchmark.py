@@ -35,7 +35,7 @@ def run_benchmark(name, func, iterations, *args, **kwargs):
     return elapsed, per_op, result
 
 
-def benchmark_allocation(mem, iterations, size_range=(100, 2000)):
+def benchmark_allocation(mem, iterations, size_range=(512, 2048)):
     """Benchmark memory allocation and deallocation"""
     keys = []
     data = []

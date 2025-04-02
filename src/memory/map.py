@@ -5,7 +5,7 @@ import numpy as np
 from src.memory.core.memory import DirectMemory
 from src.memory.eviction import LRUEvictionPolicy
 from src.memory.nucleos import NucleosManager
-from src.memory.placement import BestFitPlacementPolicy
+from src.memory.placement import BestFitPlacementPolicy, BuddyAllocator
 from src.memory.sync import HybridLockManager
 
 

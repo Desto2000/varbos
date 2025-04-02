@@ -33,11 +33,6 @@ class DirectMemory:
         stop = key.stop
         # Handle different value types
         if isinstance(value, memoryview):
-            if value.nbytes < (stop - start):
-                # Direct copy when data fits
-                value = memoryview(
-                    value.tobytes() + b"\0" * ((stop - start) - value.nbytes)
-                )
             self._view[start:stop] = value.cast("B")
         elif isinstance(value, np.ndarray):
             # Use zero-copy approach where possible

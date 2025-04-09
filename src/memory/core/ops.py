@@ -70,7 +70,7 @@ def parallel_memcpy(src, dest, length):
 def combined_fit(free_blocks, size):
     """Find smallest block that fits the requested size (optimized)"""
     if len(free_blocks) == 0:
-        return (-1, -1)  # No blocks available
+        return -1, -1  # No blocks available
 
     best_size = np.iinfo(np.int64).max
     best_addr = -1
@@ -78,7 +78,7 @@ def combined_fit(free_blocks, size):
     # Find smallest block that fits - optimize by checking min size block first
     for i in range(len(free_blocks)):
         block_size, addr = free_blocks[i]
-        if block_size >= size and block_size < best_size:
+        if size <= block_size < best_size:
             best_size = block_size
             best_addr = addr
 
@@ -87,9 +87,9 @@ def combined_fit(free_blocks, size):
                 break
 
     if best_addr == -1:
-        return (-1, -1)  # No suitable block found
+        return -1, -1  # No suitable block found
 
-    return (best_size, best_addr)
+    return best_size, best_addr
 
 
 @njit(fastmath=True, cache=True)

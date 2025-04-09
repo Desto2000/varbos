@@ -221,8 +221,7 @@ def main():
 
     # Number of operations for each benchmark
     allocation_iterations = 50000
-    access_iterations = 100000
-    concurrent_iterations = 500000
+    concurrent_iterations = 1000000
     frag_iterations = 1000
 
     for name, mem in configs:
